@@ -1,97 +1,8 @@
-# Automated Parking Management System 🅿️
 
-A modular system design for an automated parking management system built for the Kenyan
-market — real-time slot sensing, ANPR-based vehicle entry, automatic fee calculation, and
-M-Pesa/cash/card payment processing with an offline-resilient billing engine.
-
-> This repository documents the **system design**: requirements analysis, module
-> breakdown, algorithms, data structures, and a dynamic relational database schema.
-> Implementation code (C++ core logic / backend) lives alongside this design as the
-> project develops.
-
----
-
-## Table of Contents
-
-- [Overview](#overview)
-- [Requirements Analysis](#requirements-analysis)
-- [System Modules](#system-modules)
-- [Data Structures](#data-structures)
-- [Database Design](#database-design)
-- [Module Interaction](#module-interaction)
-- [Tech Notes](#tech-notes)
-- [Roadmap](#roadmap)
-
----
-
-## Overview
-
-The client's brief asks for a parking system that:
-
-1. Lets drivers **see available slots** before entering
-2. **Records vehicles** on arrival
-3. **Calculates time spent and fee** on exit
-4. **Opens the barrier** once payment is confirmed
-
-Beyond the literal brief, a real Kenyan deployment also has to handle **connectivity
-resilience** (M-Pesa/network can drop) and **auditability** (management needs occupancy
-and revenue reports) — both of which shape the design below.
-
-## Requirements Analysis
-
-| # | Stated requirement | Implicit requirements it hides |
-|---|---|---|
-| 1 | Drivers must **see** available slots before entry | Real-time slot occupancy sensing; an entrance display; continuous push updates |
-| 2 | System **records vehicles** on arrival | Unique vehicle ID (ANPR or ticket), timestamping, entry barrier control, "lot full" handling |
-| 3 | System **calculates time & fee** on exit | Billing/rate engine, entry-record matching, lost-ticket handling, tiered rates, KES currency |
-| 4 | **Barrier opens** on payment | Payment gateway (cash / M-Pesa / card), payment–actuator confirmation loop, receipt |
-
-Cross-cutting, non-negotiable concerns:
-
-- **Connectivity resilience** — offline queueing so mobile-money/network outages don't block exits or lose revenue.
-- **Auditability** — a persistent transactional database for occupancy trends, revenue, and peak-hour reporting.
-
-## System Modules
-
-Eight modules across three layers:
-
-| Layer | Modules |
-|---|---|
-| Sensing / Display | **M1** Slot Sensing & Availability Display |
-| Transaction Processing | **M2** Vehicle Entry & Registration · **M3** Barrier & Actuator Control · **M4** Time & Fee Calculation · **M5** Payment Processing · **M6** Vehicle Exit |
-| Management / Reporting | **M7** Database / Persistence · **M8** Admin, Reporting & Rate Configuration |
-
-Each module is independently developed, tested, and scaled — e.g. ANPR cameras can be
-upgraded without touching the fee engine — with **M7** as the single source of truth
-binding sensing, transactions, and reporting together.
-
-Key algorithmic behaviour per module:
-
-- **M1** — event-driven sensor polling (1–2s loop), pushes slot state to the display and locks the entrance barrier when full.
-- **M2** — denies entry when full, runs ANPR with a ticket-serial fallback below a confidence threshold, assigns the nearest free slot via a min-heap.
-- **M3** — shared entry/exit barrier control with an infrared safety interlock before closing.
-- **M4** — grace period, hourly billing rounded up, daily-rate cap for long stays.
-- **M5** — Cash / M-Pesa (Daraja STK push) / Card, with an **offline queue** (`status = PENDING_SYNC`) so a dropped connection never blocks the barrier.
-- **M6** — matches the exiting vehicle to its open transaction, settles any balance due, then frees the slot and pushes the update back to M1.
-
-## Data Structures
-
-| Structure | Used in | Why chosen |
-|---|---|---|
-| 2D Array / Matrix (SlotGrid) | M1 | O(1) direct-index access per bay; mirrors the physical layout |
-| Hash Table (plate → active transaction) | M2, M6 | O(1) average lookup at exit — critical to avoid queues at the gate |
-| Min-Heap / Priority Queue (free slots by distance) | M2 | O(log n) retrieval of the *nearest* free slot |
-| Queue (FIFO) | Entry lane sequencing, offline-payment sync (M5) | Fair, in-order processing; nothing pending is skipped |
-| Stack (LIFO) | Operator "undo last action" | Matches undo-most-recent behaviour |
-| Linked List | Occupied-slot history per bay (M7) | Variable-length history without fixed pre-allocation |
-| B-Tree Index (plateNumber, entryTime) | Database engine (M7) | Keeps lookups/range queries fast as the transaction table grows into the millions |
-| Struct/Record | Transaction, Vehicle, RateCard — all modules | Groups related fields as one logical unit through create → update → close |
 
 ## Database Design
 
-The schema is **dynamic**: it supports live status updates (slot occupancy, active
-transactions) *and* permanent historical records, with rate/fee rules management can
-change without touching code.
+
 
 ### Entity–Relationship Overview
 
@@ -195,12 +106,7 @@ Operator (1) ---< (M) Transaction   [who handled/overrode]
 | role | ENUM('ATTENDANT','SUPERVISOR','ADMIN') | |
 </details>
 
-### Why it's "dynamic"
 
-- **Slot** is continuously overwritten (`UPDATE`, not `INSERT`) to reflect real-time occupancy — read constantly by M1 for the display, but kept lightweight.
-- **Transaction** grows append-mostly and doubles as both the live record for a parked car and the closed historical record — no separate "current occupancy" table, so nothing falls out of sync.
-- **RateCard**'s `effective_from` / `effective_to` versioning lets fees change without corrupting the calculation for past, already-billed transactions.
-- Foreign keys tying **Payment** and **GateLog** back to `entry_id` let the full lifecycle of any vehicle visit be reconstructed for dispute resolution.
 
 ## Module Interaction
 
@@ -217,21 +123,3 @@ Operator (1) ---< (M) Transaction   [who handled/overrode]
                                                         [M8 Admin/Reports]
 ```
 
-## Tech Notes
-
-- **Currency**: all fees are computed and stored in KES.
-- **Payments**: M-Pesa integration via the Daraja API (STK push); cash and card fall back to operator confirmation.
-- **Resilience**: any payment or transaction that can't reach the central DB is queued locally as `PENDING_SYNC` and synced once connectivity returns.
-- **In-memory structures** (hash table, min-heap, queue, stack) back the live runtime state; the relational schema above is the persistent source of truth.
-
-## Roadmap
-
-- [ ] Core C++ simulation of M1–M6 (in-memory data structures)
-- [ ] Database schema migration scripts
-- [ ] M-Pesa Daraja API integration
-- [ ] Admin/reporting dashboard (M8)
-- [ ] Hardware integration (ANPR camera, barrier actuator, sensors)
-
----
-
-*System design report for an Automated Parking Management System — Kenya deployment.*
